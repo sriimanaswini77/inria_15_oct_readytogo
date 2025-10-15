@@ -1,0 +1,216 @@
+
+================================================================================
+DYNAMIC INS POINT IMPLEMENTATION - COMPLETE GUIDE
+================================================================================
+
+FILES INCLUDED:
+---------------
+1. inria_qatm_pytorch_v2_copy_UPDATED.py  - Core library with INS support
+2. inria_test_v2_DYNAMIC.py               - Main script with dynamic updates
+3. IMPLEMENTATION_GUIDE.txt               - This guide
+
+================================================================================
+INSTALLATION INSTRUCTIONS:
+================================================================================
+
+Step 1: Backup Your Original Files
+-----------------------------------
+cp inria_qatm_pytorch_v2_copy.py inria_qatm_pytorch_v2_copy_BACKUP.py
+cp inria_test_v2.py inria_test_v2_BACKUP.py
+
+Step 2: Replace with Updated Files
+-----------------------------------
+# Option A: Rename the updated files
+mv inria_qatm_pytorch_v2_copy_UPDATED.py inria_qatm_pytorch_v2_copy.py
+mv inria_test_v2_DYNAMIC.py inria_test_v2.py
+
+# Option B: Copy the updated files
+cp inria_qatm_pytorch_v2_copy_UPDATED.py inria_qatm_pytorch_v2_copy.py
+cp inria_test_v2_DYNAMIC.py inria_test_v2.py
+
+Step 3: Verify Dependencies
+----------------------------
+Ensure these files are in the same directory:
+- utils.py (your existing file)
+- cam_sim.py (your existing file)
+- noise.py (your existing file)
+
+================================================================================
+USAGE:
+================================================================================
+
+Basic Command:
+--------------
+python inria_test_v2.py --source your_satellite_image.jpg
+
+With Custom Parameters:
+-----------------------
+python inria_test_v2.py \
+    --source satellite_1k.jpg \
+    --search_region_width 600 \
+    --search_region_height 600 \
+    --thres 0.7 \
+    --alpha 25 \
+    --fps 5
+
+All Available Parameters:
+--------------------------
+--source, -s              Path to satellite image
+--thres, -t               Matching threshold (default: 0.7)
+--alpha, -a               QATM alpha parameter (default: 25)
+--search_region_width     Search region width (default: 500)
+--search_region_height    Search region height (default: 500)
+--ins_offset_x            Initial INS X offset (default: 0)
+--ins_offset_y            Initial INS Y offset (default: 0)
+--dynamic_update          Enable dynamic updates (default: True)
+--crop_size, -cs          Template size (default: 150)
+--resize, -r              Resize percentage (default: 100)
+--fps, -f                 Camera FPS (default: 5)
+--noise, -n               Noise type (default: none)
+--blur, -b                Blur type (default: none)
+
+================================================================================
+HOW IT WORKS:
+================================================================================
+
+1. INITIALIZATION:
+   - You click points on the satellite image to define a path
+   - First point becomes the initial template point
+   - INS point is set at/near the first template point
+   - Search region (500x500) is created around INS point
+
+2. FRAME PROCESSING:
+   - Template from camera is matched against search region only
+   - If match found:
+     * Match location (global coords) becomes NEW INS point
+     * Search region moves to the new INS point
+     * Next frame searches in the NEW region
+   - If no match:
+     * INS point stays the same (prevents drift)
+     * Search continues in same region
+
+3. PROPAGATION:
+   Frame 1: INS at (1000, 1000) → Match → New INS (1005, 995)
+   Frame 2: INS at (1005, 995)  → Match → New INS (1010, 990)
+   Frame 3: INS at (1010, 990)  → Match → New INS (1015, 985)
+   (Search region follows the detected path!)
+
+================================================================================
+KEY FEATURES:
+================================================================================
+
+✓ ADAPTIVE TRACKING
+  Search region automatically follows detected matches along the path
+
+✓ COMPUTATIONAL EFFICIENCY
+  Always searches 500x500 region instead of full satellite image
+  Typical speedup: 10-100x faster depending on image size
+
+✓ ROBUST TO FAILURES
+  When matching fails, INS point doesn't update (prevents error accumulation)
+
+✓ SEQUENTIAL LOCALIZATION
+  Like INS navigation - each match informs the next search location
+
+✓ CONFIGURABLE
+  Adjust search region size, thresholds, and update behavior
+
+================================================================================
+EXPECTED OUTPUT:
+================================================================================
+
+Console will show:
+------------------
+FRAME 1
+======================================================================
+Current INS Point: (1000, 1000)
+Search Region Offset: (750, 750)
+
+======================================================================
+✓ MATCH FOUND! (Match #1)
+======================================================================
+  Local coords (search region):  (245, 235)
+  Global coords (full image):    (995, 985)
+
+  PROPAGATING SEARCH REGION:
+    Old INS: (1000, 1000)
+    New INS: (995, 985)
+    Displacement: (-5, -15)
+  ✓ Search region updated for next frame
+======================================================================
+
+FRAME 2
+======================================================================
+Current INS Point: (995, 985)
+Search Region Offset: (745, 735)
+...
+
+================================================================================
+TROUBLESHOOTING:
+================================================================================
+
+Issue: "No module named 'utils'"
+Solution: Ensure utils.py is in the same directory
+
+Issue: "No matches found"
+Solution: 
+  - Reduce threshold: --thres 0.5
+  - Increase search region: --search_region_width 800 --search_region_height 800
+  - Adjust alpha: --alpha 20
+
+Issue: Search region drifting
+Solution: This is normal when no matches - the region stays fixed to prevent drift
+
+Issue: "CUDA not available"
+Solution: The code will run on CPU (slower but functional)
+
+================================================================================
+TECHNICAL DETAILS:
+================================================================================
+
+ImageData Class Changes:
+------------------------
++ image_raw_global      : Stores full satellite image
++ ins_point             : Current INS point (x, y)
++ search_region_size    : Size of search window
++ crop_offset           : Offset for coordinate mapping
++ _create_search_region(): Crops region around INS point
++ set_ins_point()       : Updates INS point and regenerates search region
++ map_to_global_coords(): Converts local to global coordinates
+
+Main Loop Changes:
+------------------
++ current_ins_point     : Tracks current INS point
++ Dynamic update logic  : Updates INS based on match results
++ Sequential propagation: Each match informs next search location
+
+================================================================================
+COMPARISON: STATIC vs DYNAMIC
+================================================================================
+
+STATIC (Old):
+  All frames search at the SAME initial location
+  Frame 1: Search at (1000, 1000)
+  Frame 2: Search at (1000, 1000) [SAME]
+  Frame 3: Search at (1000, 1000) [SAME]
+
+DYNAMIC (New):
+  Search location PROPAGATES with each match
+  Frame 1: Search at (1000, 1000) → Match at (995, 985)
+  Frame 2: Search at (995, 985)  → Match at (990, 970) [UPDATED]
+  Frame 3: Search at (990, 970)  → Match at (985, 955) [UPDATED]
+
+Result: More efficient tracking along the path!
+
+================================================================================
+SUPPORT:
+================================================================================
+
+For questions or issues, check:
+1. Console output for detailed error messages
+2. Ensure all dependencies are installed
+3. Verify file paths are correct (especially on Windows)
+
+================================================================================
+END OF GUIDE
+================================================================================
