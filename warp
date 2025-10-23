@@ -1,0 +1,126 @@
+import cv2
+import numpy as np
+from multiprocessing import Queue, Process
+from time import sleep
+from skimage.draw import line
+
+class SimCamera:
+    def __init__(self, fps=30, video=None, image=None, points_array=None, crop_size=(150,150), skip_pts=1, perspective_margin=0, warp=0):
+        if fps < 1:
+            fps = 1
+        self.fps = fps
+        self.frame_q = Queue(1)
+        self.stop = False
+        self.frame = None
+        self.video = None
+        self.image = None
+        self.points = None
+        self.frame_ctr = -1
+        self.crop_size = crop_size
+        self.process = None
+        self.running = Queue()
+        self.margin = perspective_margin
+        self.warp = warp
+
+        if video:
+            self.video = cv2.VideoCapture(video)
+            if not self.video.isOpened():
+                self.video = None
+        
+        if image:
+            self.image = cv2.imread(image)
+            self.points = []
+            x1y1 = points_array[0]
+            for x2y2 in points_array[1:]:
+                points = self.line_points(x1y1, x2y2, skip_pts=skip_pts)
+                self.points.extend(points)
+                x1y1 = x2y2
+            print("Total points to trace: ", len(self.points))
+        
+        self.width, self.height = self.crop_size
+        self.dst_pts = np.array([
+            [0, 0],  # top-left
+            [self.width - 1, 0],  # top-right
+            [self.width - 1, self.height - 1],  # bottom-right
+            [0, self.height - 1]  # bottom-left
+        ], dtype=np.float32)
+
+    def line_points(self, start, end, skip_pts=1):
+        rr, cc = line(int(start[1]), int(start[0]), int(end[1]), int(end[0]))
+        points = list(zip(cc, rr))
+        return points[::skip_pts]
+
+    def start(self):
+        self.stop = False
+        if self.process is not None and self.process.is_alive():
+            return
+        self.process = Process(target=self.get_frame)
+        self.process.start()
+        self.running.put(True)
+
+    def stop_thread(self):
+        self.stop = True
+        self.running.get()
+        if self.process is not None:
+            self.process.join()
+
+    def get_frame(self):
+        while not self.stop:
+            if self.video:
+                ret, frame = self.video.read()
+                if not ret:
+                    self.stop_thread()
+                    break
+                if self.frame_q.full():
+                    continue
+                self.frame_q.put(frame)
+                sleep(1.0 / self.fps)
+            elif self.image is not None:
+                if len(self.points) == 0:
+                    self.stop_thread()
+                    break
+                
+                self.frame_ctr += 1
+                if self.frame_q.full():
+                    continue
+                
+                if self.warp == 0:
+                    x, y = self.points[self.frame_ctr % len(self.points)]
+                    x, y = int(x), int(y)
+                    crop = self.image[y:y+self.height, x:x+self.width]
+                    self.frame_q.put(crop)
+                else:
+                    warp_img = self.get_perspective()
+                    self.frame_q.put(warp_img)
+                sleep(1.0 / self.fps)
+
+    def get_perspective(self):
+        x, y = self.points[self.frame_ctr % len(self.points)]
+        x, y = int(x), int(y)
+        src_pts = np.array([
+            [x, y], 
+            [x + self.width, y - self.margin], 
+            [x + self.width, y + self.height + self.margin], 
+            [x, y + self.height + self.margin]
+        ], dtype=np.float32)
+        M = cv2.getPerspectiveTransform(src_pts, self.dst_pts)
+        warped = cv2.warpPerspective(self.image, M, self.crop_size)
+        return warped
+#############################################################################################################################################
+
+dynamic visualization code :
+import argparse
+from cam_sim import SimCamera
+
+parser = argparse.ArgumentParser()
+# other arguments...
+parser.add_argument('--warp', type=int, default=0, help='Enable warp perspective: 0=Off, 1=On')
+
+args = parser.parse_args()
+
+# ... previous code ...
+
+# Initialize SimCamera with warp parameter
+camera = SimCamera(points_array=points_array, image=args.source, fps=camera_fps, skip_pts=3, warp=args.warp)
+
+# ... rest of the code ...
